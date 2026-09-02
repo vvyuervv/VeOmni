@@ -30,6 +30,15 @@ _MINIMAX_H3_FRAME_RATE = 24
 _MINIMAX_H3_TIME_DIVISION_FACTOR = 17
 _MINIMAX_H3_TIME_DIVISION_REMAINDER = 5
 
+# All randomness (timestep sampling, noise) is produced on CPU with a fixed
+# seed so results are deterministic and reproducible across devices/ranks.
+_FIXED_NOISE_SEED = 42
+
+
+def _fixed_cpu_generator() -> torch.Generator:
+    """Fresh CPU generator seeded with the fixed noise seed."""
+    return torch.Generator(device="cpu").manual_seed(_FIXED_NOISE_SEED)
+
 
 class MiniMaxH3ConditionModel(PreTrainedModel):
     config_class = MiniMaxH3ConditionModelConfig
@@ -449,6 +458,7 @@ class MiniMaxH3ConditionModel(PreTrainedModel):
         latent_h, latent_w = int(z_norm.shape[3]), int(z_norm.shape[4])
         noise = torch.randn(
             (1, 24, video_latent_t + len(keyframe_images), latent_h, latent_w),
+            generator=_fixed_cpu_generator(),
             device="cpu",
             dtype=torch.bfloat16,
         )[:, :, :1]
@@ -536,8 +546,16 @@ class MiniMaxH3ConditionModel(PreTrainedModel):
         seq_len = pk["seq_len"]
         audio_ch = pk["audio_channel"]
 
-        # 1. Sample timestep
-        timestep_id_int = int(torch.randint(0, cfg.num_train_timesteps, (1,), device=device).item())
+        # 1. Sample timestep (on CPU with fixed seed)
+        timestep_id_int = int(
+            torch.randint(0, cfg.num_train_timesteps, (1,), generator=_fixed_cpu_generator(), device="cpu").item()
+        )
+        # Optional input forcing for cross-device precision alignment: with
+        # VEOMNI_DEBUG_TIMESTEP_ID set, both sides run the identical timestep
+        # even if their RNG streams differ (e.g. GPU vs NPU).
+        _forced_timestep = os.environ.get("VEOMNI_DEBUG_TIMESTEP_ID")
+        if _forced_timestep is not None:
+            timestep_id_int = int(_forced_timestep)
         # Match the precision path: timestep = scheduler.timesteps[id].to(dtype=model_dtype),
         # passed directly to scheduler.add_noise() / scheduler.training_weight().
         # Lower dtype precision (e.g. bfloat16) shifts the argmin index used by add_noise
@@ -550,12 +568,22 @@ class MiniMaxH3ConditionModel(PreTrainedModel):
         t_video = 1.0 - ts_v.float().item() / self._scheduler_video.num_train_timesteps
         t_audio = 1.0 - ts_a.float().item() / self._scheduler_audio.num_train_timesteps
 
-        # 2. Add noise + compute velocity target
-        video_noise = torch.randn_like(clean_video)
+        # 2. Add noise + compute velocity target (noise sampled on CPU with fixed seed)
+        video_noise = torch.randn(
+            clean_video.shape,
+            generator=_fixed_cpu_generator(),
+            device="cpu",
+            dtype=clean_video.dtype,
+        ).to(device=clean_video.device)
         video_noised = self._scheduler_video.add_noise(clean_video, video_noise, ts_v)
         training_target = self._scheduler_video.training_target(clean_video, video_noise, ts_v)
 
-        audio_noise = torch.randn_like(clean_audio)
+        audio_noise = torch.randn(
+            clean_audio.shape,
+            generator=_fixed_cpu_generator(),
+            device="cpu",
+            dtype=clean_audio.dtype,
+        ).to(device=clean_audio.device)
         audio_noised = self._scheduler_audio.add_noise(clean_audio, audio_noise, ts_a)
         training_target_audio = self._scheduler_audio.training_target(clean_audio, audio_noise, ts_a)
 

@@ -395,7 +395,18 @@ class ViT3DDecoder(nn.Module):
         self.x_embedder = nn.Linear(in_channels, dim)
         self.num_register_tokens = num_register_tokens
         self.register_tokens = (
-            WarpedTensor(torch.randn(1, num_register_tokens, dim) * 0.02) if num_register_tokens > 0 else None
+            WarpedTensor(
+                torch.randn(
+                    1,
+                    num_register_tokens,
+                    dim,
+                    generator=torch.Generator(device="cpu").manual_seed(42),
+                    device="cpu",
+                )
+                * 0.02
+            )
+            if num_register_tokens > 0
+            else None
         )
         self.transformer_blocks = nn.ModuleList(
             [

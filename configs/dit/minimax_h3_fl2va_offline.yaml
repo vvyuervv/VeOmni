@@ -44,17 +44,18 @@ model:
 # Data
 # -----------------------------------------------------------------------------
 data:
-  train_path: output/minimax_h3_fl2va_embedding
+  train_path: dataset/rank_1_shard_0_repeat1500
   data_type: diffusion
   source_name: minimax_h3
   datasets_type: minimax_h3_offline
   log_sample: false
+  shuffle: false
   text_keys: text
   mm_configs:
     repeat: 100
   dataloader:
     type: native
-    num_workers: 8
+    num_workers: 1
     drop_last: true
 
 # -----------------------------------------------------------------------------
@@ -63,15 +64,18 @@ data:
 train:
   training_task: offline_training
 
-  global_batch_size: 16
+  global_batch_size: 8
   micro_batch_size: 1
   dyn_bsz: false
 
   init_device: meta
   seed: 42
 
+  enable_full_determinism: true
+  enable_batch_invariant_mode: true
+
   num_train_epochs: 1
-  max_steps: 20
+  max_steps: 150
 
   gradient_checkpointing:
     enable: true
@@ -84,6 +88,18 @@ train:
     lr_min: 1.0e-5
     lr_warmup_ratio: 0.0
     weight_decay: 0.01
+    max_grad_norm: 1.0e9
+
+  profile:
+      enable: false
+      start_step: 5
+      end_step: 8
+      trace_dir: "./profiling/minimax_h3/h3_16p_cp4_tbs4_cpsycth"
+      record_shapes: true
+      profile_memory: true
+      with_stack: false
+      with_modules: false
+      rank0_only: true
 
   accelerator:
     ulysses_size: 1
@@ -97,7 +113,7 @@ train:
 
   checkpoint:
     output_dir: output/minimax_h3_fl2va_offline
-    save_steps: 500
+    save_steps: 2000
     save_epochs: 0
     save_hf_weights: false
 
