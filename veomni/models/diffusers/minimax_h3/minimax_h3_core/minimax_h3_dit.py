@@ -81,12 +81,14 @@ def _apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.
 
 
 def _modulate_scale_shift(x, shift, scale, indices):
-    # Cast back to x: index_select on the AdaLN params can promote the expression.
-    return (x * (1.0 + scale.index_select(0, indices)) + shift.index_select(0, indices)).to(x.dtype)
+    # index_select inputs cast to fp32 first (bf16 -> fp32 is exact, so the
+    # selection is lossless); the AdaLN modulation then computes in fp32 and
+    # is cast back to x's dtype.
+    return (x * (1.0 + scale.float().index_select(0, indices)) + shift.float().index_select(0, indices)).to(x.dtype)
 
 
 def _modulate_gate(x, gate, other, indices):
-    return (x + gate.index_select(0, indices) * other).to(x.dtype)
+    return (x + gate.float().index_select(0, indices) * other).to(x.dtype)
 
 
 def _sdpa_varlen_attention(q, k, v, cu_seqlens, softmax_scale):
@@ -629,8 +631,8 @@ class MiniMaxH3DiT(nn.Module):
             video_logits = _Gather.apply(sp_group, video_logits, 0, False, False)
             audio_logits = _Gather.apply(sp_group, audio_logits, 0, False, False)
 
-        video_logits = video_logits.index_select(0, infer_out_pos.to(device))
-        audio_logits = audio_logits.index_select(0, audio_pos.to(device))
+        video_logits = video_logits.float().index_select(0, infer_out_pos.to(device))
+        audio_logits = audio_logits.float().index_select(0, audio_pos.to(device))
         if not skip_mask_out_condition:
             update_mask = update_mask.view(-1).to(device)
             if update_mask.shape[0] != video_logits.shape[0]:
